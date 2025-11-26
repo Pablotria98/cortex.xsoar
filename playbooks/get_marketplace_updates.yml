@@ -1,0 +1,52 @@
+---
+- hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    xsoar_url: "{{ lookup('env', 'XSOAR_URL') }}"
+    xsoar_api_key: "{{ lookup('env', 'XSOAR_API_KEY') }}"
+    account: "{{ lookup('env', 'XSOAR_ACCOUNT') | default(omit) }}"
+  tasks:
+  - name: Get installed content packs metadata
+    uri:
+      url: "{{ xsoar_url }}/{{ 'acc_' + account + '/' if account else '' }}contentpacks/metadata/installed"
+      method: GET
+      headers:
+        Authorization: "{{ xsoar_api_key }}"
+        Accept: "application/json"
+      validate_certs: true
+    register: installed_packs_response
+
+  - name: Parse installed packs
+    set_fact:
+      installed_packs: "{{ installed_packs_response.json }}"
+
+  - name: Filter packs with updates available
+    set_fact:
+      packs_needing_updates: "{{ installed_packs | selectattr('updateAvailable', 'equalto', true) | list }}"
+
+  - name: Get marketplace details for packs needing updates
+    uri:
+      url: "{{ xsoar_url }}/{{ 'acc_' + account + '/' if account else '' }}contentpacks/marketplace/{{ item.id }}"
+      method: GET
+      headers:
+        Authorization: "{{ xsoar_api_key }}"
+        Accept: "application/json"
+      validate_certs: true
+    register: marketplace_pack_response
+    loop: "{{ packs_needing_updates }}"
+    throttle: 2
+
+  - name: Collect detailed pack information
+    set_fact:
+      detailed_packs: "{{ (packs_needing_updates | zip(marketplace_pack_response.results | map(attribute='json'))) | list }}"
+
+  - name: Display packs needing updates with details
+    debug:
+      msg: "Packs needing updates: {{ detailed_packs | map('first') | map(attribute='name') | list }}"
+    when: detailed_packs | length > 0
+
+  - name: No updates needed
+    debug:
+      msg: "All installed packs are up to date."
+    when: detailed_packs | length == 0

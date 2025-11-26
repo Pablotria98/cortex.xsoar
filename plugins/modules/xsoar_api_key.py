@@ -6,7 +6,7 @@ from __future__ import (absolute_import, division, print_function)
 
 import json
 from ansible.module_utils.basic import AnsibleModule
-from ansible.module_utils.urls import open_url
+from ansible_collections.cortex.xsoar.plugins.module_utils.xsoar import CortexXSOARClient
 
 __metaclass__ = type
 
@@ -54,6 +54,11 @@ options:
         required: false
         type: bool
         default: true
+    timeout:
+        description: The timeout in seconds for the API requests.
+        required: false
+        type: int
+        default: 60
 
 extends_documentation_fragment:
     - cortex.xsoar.xsoar_api_key
@@ -100,32 +105,16 @@ message:
 '''
 
 
-class CortexXSOARAPIKey:
+class CortexXSOARAPIKey(CortexXSOARClient):
     def __init__(self, module):
-        self.module = module
+        super(CortexXSOARAPIKey, self).__init__(module)
         self.name = module.params['name']
         self.state = module.params['state']
-        self.base_url = module.params['url']
-        self.api_key = module.params['api_key']
-        self.account = module.params['account']
         self.key = module.params['key']
-        self.validate_certs = module.params['validate_certs']
-        self.headers = {
-            "Authorization": f"{self.api_key}",
-            "Accept": "application/json",
-            "Content-Type": "application/json"
-        }
         self.id = None
 
     def exists(self):
-        url_suffix = 'apikeys'
-        if self.account:
-            url = f'{self.base_url}/acc_{self.account}/{url_suffix}'
-        else:
-            url = f'{self.base_url}/{url_suffix}'
-
-        response = open_url(url, method="GET", headers=self.headers, validate_certs=self.validate_certs)
-        results = json.loads(response.read())
+        results = self.send_request("GET", 'apikeys')
 
         if not results or not isinstance(results, list):
             return False
@@ -145,38 +134,22 @@ class CortexXSOARAPIKey:
         return True
 
     def add(self):
-        url_suffix = 'apikeys'
-
-        if self.account:
-            url = f'{self.base_url}/acc_{self.account}/{url_suffix}'
-        else:
-            url = f'{self.base_url}/{url_suffix}'
-
         data = {
             "name": self.name,
             "apikey": self.key
         }
 
-        json_data = json.dumps(data, ensure_ascii=False)
-
         try:
             if not self.module.check_mode:
-                open_url(url, method="POST", headers=self.headers, data=json_data, validate_certs=self.validate_certs)
+                self.send_request("POST", 'apikeys', data)
             return 0, f"API Key {self.name} created in Palo Alto Cortex XSOAR", ""
         except Exception as e:
             return 1, f"Failed to create API Key {self.name}", f"Error creating API Key: {str(e)}"
 
     def delete(self):
-        url_suffix = f"apikeys/{self.id}"
-
-        if self.account:
-            url = f'{self.base_url}/acc_{self.account}/{url_suffix}'
-        else:
-            url = f'{self.base_url}/{url_suffix}'
-
         try:
             if not self.module.check_mode:
-                open_url(url, method="DELETE", headers=self.headers, validate_certs=self.validate_certs)
+                self.send_request("DELETE", f"apikeys/{self.id}")
             return 0, f"API Key {self.name} deleted in Palo Alto Cortex XSOAR", ""
         except Exception as e:
             return 1, f"Failed to delete API Key {self.name}", f"Error deleting API Key: {str(e)}"
@@ -191,7 +164,8 @@ def run_module():
             key=dict(type='str', required=True),
             state=dict(type='str', choices=['absent', 'present'], default='present'),
             account=dict(type='str'),
-            validate_certs=dict(type='bool', default=True)
+            validate_certs=dict(type='bool', default=True),
+            timeout=dict(type='int', default=60)
         ),
         supports_check_mode=True
     )

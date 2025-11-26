@@ -6,7 +6,7 @@ from __future__ import (absolute_import, division, print_function)
 
 import json
 from ansible.module_utils.basic import AnsibleModule
-from ansible.module_utils.urls import open_url
+from ansible_collections.cortex.xsoar.plugins.module_utils.xsoar import CortexXSOARClient
 
 __metaclass__ = type
 
@@ -149,9 +149,9 @@ message:
 '''
 
 
-class CortexXSOARList:
+class CortexXSOARList(CortexXSOARClient):
     def __init__(self, module):
-        self.module = module
+        super(CortexXSOARList, self).__init__(module)
         self.name = module.params['name']
         self.content_type = module.params['content_type']
         self.content = module.params['content'] or ""
@@ -159,27 +159,11 @@ class CortexXSOARList:
         self.description = module.params['description']
         self.propagation_labels = module.params['propagation_labels']
         self.state = module.params['state']
-        self.base_url = module.params['url']
-        self.api_key = module.params['api_key']
-        self.account = module.params['account']
-        self.validate_certs = module.params['validate_certs']
-        self.headers = {
-            "Authorization": f"{self.api_key}",
-            "Accept": "application/json",
-            "Content-Type": "application/json"
-        }
         self.read_roles = module.params['read_roles']
         self.edit_roles = module.params['edit_roles']
 
     def exists(self):
-        url_suffix = 'lists'
-        if self.account:
-            url = f'{self.base_url}/acc_{self.account}/{url_suffix}'
-        else:
-            url = f'{self.base_url}/{url_suffix}'
-
-        response = open_url(url, method="GET", headers=self.headers, validate_certs=self.validate_certs)
-        results = json.loads(response.read())
+        results = self.send_request("GET", 'lists')
 
         if not results or not isinstance(results, list):
             return False
@@ -223,13 +207,6 @@ class CortexXSOARList:
         return True
 
     def add(self):
-        url_suffix = 'lists/save'
-
-        if self.account:
-            url = f'{self.base_url}/acc_{self.account}/{url_suffix}'
-        else:
-            url = f'{self.base_url}/{url_suffix}'
-
         if self.content_type == "JSON":
             content = json.dumps(self.json_content, indent=2)
         else:
@@ -257,32 +234,21 @@ class CortexXSOARList:
         else:
             data.update({"allReadWrite": True})
 
-        json_data = json.dumps(data, ensure_ascii=False)
-
         try:
             if not self.module.check_mode:
-                open_url(url, method="POST", headers=self.headers, data=json_data, validate_certs=self.validate_certs)
+                self.send_request("POST", 'lists/save', data)
             return 0, f"List {self.name} created in Palo Alto Cortex XSOAR", ""
         except Exception as e:
             return 1, f"Failed to create list {self.name}", f"Error creating list: {str(e)}"
 
     def delete(self):
-        url_suffix = "lists/delete"
-
-        if self.account:
-            url = f'{self.base_url}/acc_{self.account}/{url_suffix}'
-        else:
-            url = f'{self.base_url}/{url_suffix}'
-
         data = {
             "id": self.name
         }
 
-        json_data = json.dumps(data, ensure_ascii=False)
-
         try:
             if not self.module.check_mode:
-                open_url(url, method="POST", headers=self.headers, data=json_data, validate_certs=self.validate_certs)
+                self.send_request("POST", "lists/delete", data)
             return 0, f"List {self.name} deleted in Palo Alto Cortex XSOAR", ""
         except Exception as e:
             return 1, f"Failed to delete list {self.name}", f"Error deleting list: {str(e)}"
@@ -303,7 +269,8 @@ def run_module():
             account=dict(type='str'),
             validate_certs=dict(type='bool', default=True),
             read_roles=dict(type='list'),
-            edit_roles=dict(type='list')
+            edit_roles=dict(type='list'),
+            timeout=dict(type='int', default=60)
         ),
         supports_check_mode=True,
         mutually_exclusive=[

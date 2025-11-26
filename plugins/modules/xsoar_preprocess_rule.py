@@ -6,7 +6,7 @@ from __future__ import (absolute_import, division, print_function)
 
 import json
 from ansible.module_utils.basic import AnsibleModule
-from ansible.module_utils.urls import open_url
+from ansible_collections.cortex.xsoar.plugins.module_utils.xsoar import CortexXSOARClient
 
 __metaclass__ = type
 
@@ -20,36 +20,29 @@ notes:
   - Tested against Palo Alto Cortex XSOAR 6.10 (B187344).
 options:
     name:
-        description: Name of the List.
+        description: Name of the Pre-process Rule.
         required: true
         type: str
-    description:
-        description: Description of the List.
-        required: false
-        type: str
-    content:
-        description: Content of List.
-        required: false
-        type: str
-    json_content:
-        description: Content of JSON List.
-        required: false
-        type: dict
-    content_type:
-        description: Type of list.
+    action:
+        description: Action of the Pre-process Rule.
+        required: true
         type: str
         choices:
-          - JSON
-          - HTML
-          - Text
-          - Markdown
-          - CSS
-        default: Text
+          - script
+    script_id:
+        description: Script ID for the action.
+        required: false
+        type: str
+    enabled:
+        description: Is the Pre-process Rule enabled.
+        required: false
+        type: bool
+        default: true
     propagation_labels:
         description: Propagation labels to add to the account
         required: false
         type: list
-        default: ["all"]
+        default: []
     state:
         description: The state the configuration should be left in.
         required: true
@@ -77,9 +70,14 @@ options:
         required: false
         type: bool
         default: true
+    timeout:
+        description: The timeout in seconds for the API requests.
+        required: false
+        type: int
+        default: 60
 
 extends_documentation_fragment:
-    - cortex.xsoar.xsoar_list
+    - cortex.xsoar.xsoar_preprocess_rule
 
 author:
     - Wouter Stinkens (@wstinkens)
@@ -128,36 +126,20 @@ message:
 '''
 
 
-class CortexXSOARPreprocessRule:
+class CortexXSOARPreprocessRule(CortexXSOARClient):
     def __init__(self, module):
-        self.module = module
+        super(CortexXSOARPreprocessRule, self).__init__(module)
         self.name = module.params['name']
         self.action = module.params['action']
         self.script_id = module.params['script_id']
         self.enabled = module.params['enabled']
         self.propagation_labels = module.params['propagation_labels']
         self.state = module.params['state']
-        self.base_url = module.params['url']
-        self.api_key = module.params['api_key']
-        self.account = module.params['account']
-        self.validate_certs = module.params['validate_certs']
-        self.headers = {
-            "Authorization": f"{self.api_key}",
-            "Accept": "application/json",
-            "Content-Type": "application/json"
-        }
         self.id = None
         self.raw_rule = None
 
     def exists(self):
-        url_suffix = 'preprocess/rules'
-        if self.account:
-            url = f'{self.base_url}/acc_{self.account}/{url_suffix}'
-        else:
-            url = f'{self.base_url}/{url_suffix}'
-
-        response = open_url(url, method="GET", headers=self.headers, validate_certs=self.validate_certs)
-        results = json.loads(response.read())
+        results = self.send_request("GET", 'preprocess/rules')
 
         if not results or not isinstance(results, list):
             return False
@@ -196,13 +178,6 @@ class CortexXSOARPreprocessRule:
         return True
 
     def add(self):
-        url_suffix = 'preprocess/rule'
-
-        if self.account:
-            url = f'{self.base_url}/acc_{self.account}/{url_suffix}'
-        else:
-            url = f'{self.base_url}/{url_suffix}'
-
         if self.raw_rule:
             self.raw_rule['action'] = self.action
             self.raw_rule['scriptID'] = self.script_id
@@ -212,11 +187,9 @@ class CortexXSOARPreprocessRule:
 
             data = self.raw_rule
 
-            json_data = json.dumps(data, ensure_ascii=False)
-
             try:
                 if not self.module.check_mode:
-                    open_url(url, method="POST", headers=self.headers, data=json_data, validate_certs=self.validate_certs)
+                    self.send_request("POST", 'preprocess/rule', data)
                 return 0, f"Pre-process rule {self.name} updated in Palo Alto Cortex XSOAR", ""
             except Exception as e:
                 return 1, f"Failed to update pre-process rule{self.name}", f"Error updating pre-process rule: {str(e)}"
@@ -241,26 +214,17 @@ class CortexXSOARPreprocessRule:
                 "commitMessage": "Preprocess rule edited"
             }
 
-            json_data = json.dumps(data, ensure_ascii=False)
-
             try:
                 if not self.module.check_mode:
-                    open_url(url, method="POST", headers=self.headers, data=json_data, validate_certs=self.validate_certs)
+                    self.send_request("POST", 'preprocess/rule', data)
                 return 0, f"Pre-process rule {self.name} created in Palo Alto Cortex XSOAR", ""
             except Exception as e:
                 return 1, f"Failed to create pre-process rule{self.name}", f"Error creating pre-process rule: {str(e)}"
 
     def delete(self):
-        url_suffix = f"preprocess/rule/{self.id}"
-
-        if self.account:
-            url = f'{self.base_url}/acc_{self.account}/{url_suffix}'
-        else:
-            url = f'{self.base_url}/{url_suffix}'
-
         try:
             if not self.module.check_mode:
-                open_url(url, method="DELETE", headers=self.headers, validate_certs=self.validate_certs)
+                self.send_request("DELETE", f"preprocess/rule/{self.id}")
             return 0, f"Pre-process rule {self.name} deleted in Cortex XSOAR", ""
         except Exception as e:
             return 1, f"Failed to delete pre-process rule {self.name}", f"Error deleting pre-process rule: {str(e)}"
@@ -278,7 +242,8 @@ def run_module():
             validate_certs=dict(type='bool', default=True),
             action=dict(type='str', choices=['script']),
             enabled=dict(type='bool', default=True),
-            script_id=dict(type='str')
+            script_id=dict(type='str'),
+            timeout=dict(type='int', default=60)
         ),
         supports_check_mode=True,
         required_if=[

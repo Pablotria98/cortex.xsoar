@@ -66,6 +66,30 @@ The following example task creates an integration instance of Demisto REST API o
     validate_certs: False
 ```
 
+## Running Playbooks
+
+This collection includes example playbooks in the `playbooks/` directory. To run them:
+
+1. **Install the collection** (see [Installing this collection](#installing-this-collection)).
+
+2. **Set environment variables** for your XSOAR instance:
+   ```bash
+   export XSOAR_URL=https://your-xsoar-instance.com
+   export XSOAR_API_KEY=your_api_key
+   ```
+
+3. **Run the playbook**:
+   ```bash
+   ansible-playbook playbooks/playbook.yml
+   ```
+
+For convenience, copy `.env.example` to `.env`, fill in your values, and use the provided `run.sh` script:
+   ```bash
+   cp .env.example .env
+   # Edit .env with your XSOAR_URL and XSOAR_API_KEY
+   ./run.sh
+   ```
+
 ## Release notes
 
 Release notes are available [here](https://github.com/NVISOsecurity/cortex.xsoar/blob/main/CHANGELOG.rst).

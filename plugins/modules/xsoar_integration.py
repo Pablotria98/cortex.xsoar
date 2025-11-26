@@ -6,13 +6,13 @@ from __future__ import (absolute_import, division, print_function)
 
 import json
 from ansible.module_utils.basic import AnsibleModule
-from ansible.module_utils.urls import open_url
+from ansible_collections.cortex.xsoar.plugins.module_utils.xsoar import CortexXSOARClient
 
 __metaclass__ = type
 
 DOCUMENTATION = r'''
 ---
-module: xsoar_api_integration
+module: xsoar_integration
 short_description: Create an integration instance in Palo Alto Cortex XSOAR
 version_added: "1.0.0"
 description: Create an integration instance in Palo Alto Cortex XSOAR
@@ -46,6 +46,10 @@ options:
         description: The id of the incomming mapper that should be added to the integration if needed.
         required: false
         type: str
+    engine:
+        description: The engine id to assign to the integration instance.
+        required: false
+        type: str
     state:
         description: The state the configuration should be left in.
         required: true
@@ -73,6 +77,11 @@ options:
         required: false
         type: bool
         default: true
+    timeout:
+        description: The timeout in seconds for the API requests.
+        required: false
+        type: int
+        default: 60
 
 extends_documentation_fragment:
     - cortex.xsoar.xsoar_integration
@@ -132,9 +141,9 @@ message:
 '''
 
 
-class CortexXSOARIntegration:
+class CortexXSOARIntegration(CortexXSOARClient):
     def __init__(self, module):
-        self.module = module
+        super(CortexXSOARIntegration, self).__init__(module)
         self.name = module.params['name']
         self.brand = module.params['brand']
         self.enabled = module.params['enabled']
@@ -142,35 +151,20 @@ class CortexXSOARIntegration:
         self.default_ignore = module.params['default_ignore']
         self.propagation_labels = module.params['propagation_labels'] or []
         self.state = module.params['state']
-        self.base_url = module.params['url']
-        self.api_key = module.params['api_key']
-        self.account = module.params['account']
-        self.validate_certs = module.params['validate_certs']
-        self.headers = {
-            "Authorization": f"{self.api_key}",
-            "Accept": "application/json",
-            "Content-Type": "application/json"
-        }
         self.id = None
         self.raw_instance = None
         self.incoming_mapper_id = module.params['incoming_mapper_id']
+        self.engine = module.params['engine']
 
     def exists(self):
-        url_suffix = 'settings/integration/search'
-
-        if self.account:
-            url = f'{self.base_url}/acc_{self.account}/{url_suffix}'
-        else:
-            url = f'{self.base_url}/{url_suffix}'
-
         data = {
             "size": 500
         }
-
-        json_data = json.dumps(data, ensure_ascii=False)
-
-        response = open_url(url, method="POST", headers=self.headers, data=json_data, validate_certs=self.validate_certs)
-        results = json.loads(response.read())
+        
+        try:
+            results = self.send_request("POST", 'settings/integration/search', data)
+        except Exception:
+            return False
 
         if not results or not isinstance(results, dict):
             return False
@@ -198,6 +192,9 @@ class CortexXSOARIntegration:
         if not xsoar_integration_instance.get('incomingMapperId') == self.incoming_mapper_id:
             return False
 
+        if self.engine and not xsoar_integration_instance.get('engine') == self.engine:
+            return False
+
         for k, v in self.configuration.items():
             if not (config_items := [c for c in xsoar_integration_instance.get('data') if c.get('name') == k]) \
                     or not len(config_items) == 1:
@@ -210,15 +207,7 @@ class CortexXSOARIntegration:
         return True
 
     def add(self):
-        url_suffix = 'settings/integration'
-
-        if self.account:
-            url = f'{self.base_url}/acc_{self.account}/{url_suffix}'
-        else:
-            url = f'{self.base_url}/{url_suffix}'
-
         if self.raw_instance:
-
             configuration = self.raw_instance['data']
 
             for i, config_item in enumerate(self.raw_instance['data']):
@@ -231,14 +220,14 @@ class CortexXSOARIntegration:
             self.raw_instance['enabled'] = str(self.enabled).lower()
             self.raw_instance['data'] = configuration
             self.raw_instance['incomingMapperId'] = self.incoming_mapper_id or self.raw_instance['incomingMapperId']
+            if self.engine:
+                self.raw_instance['engine'] = self.engine
 
             data = self.raw_instance
 
-            json_data = json.dumps(data, ensure_ascii=False)
-
             try:
                 if not self.module.check_mode:
-                    open_url(url, method="PUT", headers=self.headers, data=json_data, validate_certs=self.validate_certs)
+                    self.send_request("PUT", 'settings/integration', data)
                 return 0, f"Integration instance {self.name} updated in Palo Alto Cortex XSOAR", ""
             except Exception as e:
                 return 1, f"Failed to update integration instance {self.name}", f"Error updating integration instance: {str(e)}"
@@ -263,29 +252,23 @@ class CortexXSOARIntegration:
                 "incomingMapperId": self.incoming_mapper_id
             }
 
+            if self.engine:
+                data['engine'] = self.engine
+
             if self.propagation_labels:
                 data.update({"propagationLabels": self.propagation_labels})
 
-            json_data = json.dumps(data, ensure_ascii=False)
-
             try:
                 if not self.module.check_mode:
-                    open_url(url, method="PUT", headers=self.headers, data=json_data, validate_certs=self.validate_certs)
+                    self.send_request("PUT", 'settings/integration', data)
                 return 0, f"Integration instance {self.name} created in Palo Alto Cortex XSOAR", ""
             except Exception as e:
                 return 1, f"Failed to create integration instance {self.name}", f"Error creating integration instance: {str(e)}"
 
     def delete(self):
-        url_suffix = f"settings/integration/{self.id}"
-
-        if self.account:
-            url = f'{self.base_url}/acc_{self.account}/{url_suffix}'
-        else:
-            url = f'{self.base_url}/{url_suffix}'
-
         try:
             if not self.module.check_mode:
-                open_url(url, method="DELETE", headers=self.headers, validate_certs=self.validate_certs)
+                self.send_request("DELETE", f"settings/integration/{self.id}")
             return 0, f"Integration instance {self.name} deleted in Palo Alto Cortex XSOAR", ""
         except Exception as e:
             return 1, f"Failed to delete integration instance {self.name}", f"Error deleting integration instance: {str(e)}"
@@ -306,6 +289,8 @@ def run_module():
             account=dict(type='str'),
             validate_certs=dict(type='bool', default=True),
             incoming_mapper_id=dict(type='str', required=False),
+            engine=dict(type='str', required=False),
+            timeout=dict(type='int', default=60),
         ),
         supports_check_mode=True
     )

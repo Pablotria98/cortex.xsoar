@@ -8,7 +8,7 @@ import json
 from datetime import datetime, timezone
 from dateutil.parser import parse
 from ansible.module_utils.basic import AnsibleModule
-from ansible.module_utils.urls import open_url
+from ansible_collections.cortex.xsoar.plugins.module_utils.xsoar import CortexXSOARClient
 
 __metaclass__ = type
 
@@ -103,6 +103,11 @@ options:
         required: false
         type: bool
         default: true
+    timeout:
+        description: The timeout in seconds for the API requests.
+        required: false
+        type: int
+        default: 60
 
 extends_documentation_fragment:
     - cortex.xsoar.xsoar_list
@@ -154,9 +159,9 @@ message:
 '''
 
 
-class CortexXSOARJob:
+class CortexXSOARJob(CortexXSOARClient):
     def __init__(self, module):
-        self.module = module
+        super(CortexXSOARJob, self).__init__(module)
         self.name = module.params['name']
         self.cron = module.params['cron']
         self.owner = module.params['owner']
@@ -170,15 +175,6 @@ class CortexXSOARJob:
         self.ending_type = module.params['ending_type']
         self.incident_type = module.params['incident_type']
         self.state = module.params['state']
-        self.base_url = module.params['url']
-        self.api_key = module.params['api_key']
-        self.account = module.params['account']
-        self.validate_certs = module.params['validate_certs']
-        self.headers = {
-            "Authorization": f"{self.api_key}",
-            "Accept": "application/json",
-            "Content-Type": "application/json"
-        }
         self.id = None
         self.raw_job = None
         if self.start_date == "now":
@@ -192,16 +188,12 @@ class CortexXSOARJob:
             self.end_date = parse(self.end_date).astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
 
     def exists(self):
-        url_suffix = 'jobs/search'
-
-        url = f'{self.base_url}/acc_{self.account}/{url_suffix}'
-
         data = {"page": 0, "size": 500, "query": "", "sort": [{"field": "id", "asc": False}]}
 
-        json_data = json.dumps(data, ensure_ascii=False)
-
-        response = open_url(url, method="POST", headers=self.headers, data=json_data, validate_certs=self.validate_certs)
-        results = json.loads(response.read())
+        try:
+            results = self.send_request("POST", 'jobs/search', data)
+        except Exception:
+            return False
 
         if not results or not isinstance(results, dict):
             return False
@@ -260,10 +252,6 @@ class CortexXSOARJob:
         return True
 
     def add(self):
-        url_suffix = 'jobs'
-
-        url = f'{self.base_url}/acc_{self.account}/{url_suffix}'
-
         if self.raw_job:
 
             self.raw_job['version'] = -1
@@ -287,11 +275,9 @@ class CortexXSOARJob:
 
             data = self.raw_job
 
-            json_data = json.dumps(data, ensure_ascii=False)
-
             try:
                 if not self.module.check_mode:
-                    open_url(url, method="POST", headers=self.headers, data=json_data, validate_certs=self.validate_certs)
+                    self.send_request("POST", 'jobs', data)
                 return 0, f"Job {self.name} updated in Palo Alto Cortex XSOAR", ""
             except Exception as e:
                 return 1, f"Failed to update job {self.name}", f"Error updating job: {str(e)}"
@@ -334,23 +320,17 @@ class CortexXSOARJob:
                 "notifyOwner": self.notify_owner
             }
 
-            json_data = json.dumps(data, ensure_ascii=False)
-
             try:
                 if not self.module.check_mode:
-                    open_url(url, method="POST", headers=self.headers, data=json_data, validate_certs=self.validate_certs)
+                    self.send_request("POST", 'jobs', data)
                 return 0, f"Job {self.name} created in Palo Alto Cortex XSOAR", ""
             except Exception as e:
                 return 1, f"Failed to create job {self.name}", f"Error creating job: {str(e)}"
 
     def delete(self):
-        url_suffix = f'jobs/{self.id}'
-
-        url = f'{self.base_url}/acc_{self.account}/{url_suffix}'
-
         try:
             if not self.module.check_mode:
-                open_url(url, method="DELETE", headers=self.headers, validate_certs=self.validate_certs)
+                self.send_request("DELETE", f'jobs/{self.id}')
             return 0, f"Job {self.name} deleted in Palo Alto Cortex XSOAR", ""
         except Exception as e:
             return 1, f"Failed to delete job {self.name}", f"Error deleting job: {str(e)}"
@@ -363,10 +343,10 @@ def run_module():
             url=dict(type='str', required=True),
             api_key=dict(type='str', required=True),
             state=dict(type='str', choices=['absent', 'present'], default='present'),
-            account=dict(type='str', required=True),
+            account=dict(type='str'),
             validate_certs=dict(type='bool', default=True),
             cron=dict(type='str', required=True),
-            playbook_id=dict(type=str, required=True),
+            playbook_id=dict(type='str', required=True),
             close_previous_run=dict(type='bool', default=False),
             should_trigger_new=dict(type='bool', default=False),
             notify_owner=dict(type='bool', default=False),
@@ -375,7 +355,8 @@ def run_module():
             start_date=dict(type='str', default='now'),
             end_date=dict(type='str'),
             ending_type=dict(type='str', default="never"),
-            incident_type=dict(type='str', default="Unclassified")
+            incident_type=dict(type='str', default="Unclassified"),
+            timeout=dict(type='int', default=60)
         ),
         supports_check_mode=True
     )
